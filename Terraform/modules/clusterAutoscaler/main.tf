@@ -1,27 +1,50 @@
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+# IAM Policy for Cluster Autoscaler
 resource "aws_iam_policy" "cluster_autoscaler" {
-  name        = "${var.cluster_name}-cluster-autoscaler"
-  description = "Cluster Autoscaler policy"
+  name        = "ClusterAutoscalerPolicy-${var.cluster_name}"
+  description = "Policy for Cluster Autoscaler to manage ASG"
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "autoscaling:DescribeAutoScalingGroups",
-        "autoscaling:DescribeAutoScalingInstances",
-        "autoscaling:DescribeLaunchConfigurations",
-        "autoscaling:DescribeTags",
-        "autoscaling:SetDesiredCapacity",
-        "autoscaling:TerminateInstanceInAutoScalingGroup",
-        "ec2:DescribeLaunchTemplateVersions"
-      ]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:DescribeAutoScalingInstances",
+          "autoscaling:DescribeLaunchConfigurations",
+          "autoscaling:DescribeScalingActivities",
+          "autoscaling:DescribeTags",
+          "ec2:DescribeImages",
+          "ec2:DescribeInstanceTypes",
+          "ec2:DescribeLaunchTemplateVersions",
+          "ec2:GetInstanceTypesFromInstanceRequirements",
+          "eks:DescribeNodegroup"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "autoscaling:SetDesiredCapacity",
+          "autoscaling:TerminateInstanceInAutoScalingGroup"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "autoscaling:ResourceTag/k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
+          }
+        }
+      }
+    ]
   })
 }
 
+# IAM Role for Cluster Autoscaler (IRSA)
 resource "aws_iam_role" "cluster_autoscaler" {
-  name = "${var.cluster_name}-cluster-autoscaler"
+  name = "ClusterAutoscalerRole-${var.cluster_name}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -33,137 +56,240 @@ resource "aws_iam_role" "cluster_autoscaler" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${replace(var.oidc_provider_url, "https://", "")}:sub" = "system:serviceaccount:kube-system:cluster-autoscaler"
+          "${var.oidc_provider_url}:sub" = "system:serviceaccount:${var.autoscaler_namespace}:cluster-autoscaler"
+          "${var.oidc_provider_url}:aud" = "sts.amazonaws.com"
         }
       }
     }]
   })
 }
 
-
 resource "aws_iam_role_policy_attachment" "cluster_autoscaler" {
   role       = aws_iam_role.cluster_autoscaler.name
   policy_arn = aws_iam_policy.cluster_autoscaler.arn
 }
 
-resource "kubernetes_service_account" "cluster_autoscaler" {
-  metadata {
-    name      = "cluster-autoscaler"
-    namespace = "kube-system"
-    annotations = {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.cluster_autoscaler.arn
-    }
-    labels = {
-      "app.kubernetes.io/name"      = "cluster-autoscaler"
-      "app.kubernetes.io/component" = "cluster-autoscaler"
-    }
-  }
+# Kubernetes ServiceAccount
+resource "kubectl_manifest" "cluster_autoscaler_sa" {
+  depends_on = [
+    aws_iam_role.cluster_autoscaler,
+    aws_iam_role_policy_attachment.cluster_autoscaler
+  ]
+  yaml_body = <<-YAML
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: cluster-autoscaler
+      namespace: ${var.autoscaler_namespace}
+      annotations:
+        eks.amazonaws.com/role-arn: ${aws_iam_role.cluster_autoscaler.arn}
+      labels:
+        k8s-addon: cluster-autoscaler.addons.k8s.io
+        k8s-app: cluster-autoscaler
+  YAML
 }
 
-resource "helm_release" "cluster_autoscaler" {
-  name       = "cluster-autoscaler"
-  namespace  = "kube-system"
-  repository = "https://kubernetes.github.io/autoscaler"
-  chart      = "cluster-autoscaler"
-  version    = "9.37.0"
+# ClusterRole
+resource "kubectl_manifest" "cluster_autoscaler_cluster_role" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: cluster-autoscaler
+      labels:
+        k8s-addon: cluster-autoscaler.addons.k8s.io
+        k8s-app: cluster-autoscaler
+    rules:
+      - apiGroups: [""]
+        resources: ["events", "endpoints"]
+        verbs: ["create", "patch"]
+      - apiGroups: [""]
+        resources: ["pods/eviction"]
+        verbs: ["create"]
+      - apiGroups: [""]
+        resources: ["pods/status"]
+        verbs: ["update"]
+      - apiGroups: [""]
+        resources: ["endpoints"]
+        resourceNames: ["cluster-autoscaler"]
+        verbs: ["get", "update"]
+      - apiGroups: [""]
+        resources: ["nodes"]
+        verbs: ["watch", "list", "get", "update"]
+      - apiGroups: [""]
+        resources:
+          - "namespaces"
+          - "pods"
+          - "services"
+          - "replicationcontrollers"
+          - "persistentvolumeclaims"
+          - "persistentvolumes"
+        verbs: ["watch", "list", "get"]
+      - apiGroups: ["extensions"]
+        resources: ["replicasets", "daemonsets"]
+        verbs: ["watch", "list", "get"]
+      - apiGroups: ["policy"]
+        resources: ["poddisruptionbudgets"]
+        verbs: ["watch", "list"]
+      - apiGroups: ["apps"]
+        resources: ["statefulsets", "replicasets", "daemonsets"]
+        verbs: ["watch", "list", "get"]
+      - apiGroups: ["storage.k8s.io"]
+        resources: ["storageclasses", "csinodes", "csidrivers", "csistoragecapacities"]
+        verbs: ["watch", "list", "get"]
+      - apiGroups: ["batch", "extensions"]
+        resources: ["jobs"]
+        verbs: ["get", "list", "watch", "patch"]
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["create"]
+      - apiGroups: ["coordination.k8s.io"]
+        resourceNames: ["cluster-autoscaler"]
+        resources: ["leases"]
+        verbs: ["get", "update"]
+  YAML
+}
 
-  set {
-    name  = "autoDiscovery.clusterName"
-    value = var.cluster_name
-  }
+# ClusterRoleBinding
+resource "kubectl_manifest" "cluster_autoscaler_cluster_role_binding" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: cluster-autoscaler
+      labels:
+        k8s-addon: cluster-autoscaler.addons.k8s.io
+        k8s-app: cluster-autoscaler
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: cluster-autoscaler
+    subjects:
+      - kind: ServiceAccount
+        name: cluster-autoscaler
+        namespace: ${var.autoscaler_namespace}
+  YAML
 
-  set {
-    name  = "awsRegion"
-    value = var.region
-  }
+  depends_on = [kubectl_manifest.cluster_autoscaler_cluster_role]
+}
 
-  set {
-    name  = "cloudProvider"
-    value = "aws"
-  }
+# Role
+resource "kubectl_manifest" "cluster_autoscaler_role" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: cluster-autoscaler
+      namespace: ${var.autoscaler_namespace}
+      labels:
+        k8s-addon: cluster-autoscaler.addons.k8s.io
+        k8s-app: cluster-autoscaler
+    rules:
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["create", "list", "watch"]
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        resourceNames: ["cluster-autoscaler-status", "cluster-autoscaler-priority-expander"]
+        verbs: ["delete", "get", "update", "watch"]
+  YAML
+}
 
-  set {
-    name  = "rbac.create"
-    value = "true"
-  }
+# RoleBinding
+resource "kubectl_manifest" "cluster_autoscaler_role_binding" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: cluster-autoscaler
+      namespace: ${var.autoscaler_namespace}
+      labels:
+        k8s-addon: cluster-autoscaler.addons.k8s.io
+        k8s-app: cluster-autoscaler
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: cluster-autoscaler
+    subjects:
+      - kind: ServiceAccount
+        name: cluster-autoscaler
+        namespace: ${var.autoscaler_namespace}
+  YAML
 
-  set {
-    name  = "serviceAccount.create"
-    value = "false"
-  }
+  depends_on = [kubectl_manifest.cluster_autoscaler_role]
+}
 
-  set {
-    name  = "serviceAccount.name"
-    value = kubernetes_service_account.cluster_autoscaler.metadata[0].name
-  }
-
-  set {
-    name  = "extraArgs.balance-similar-node-groups"
-    value = "true"
-  }
-
-  set {
-    name  = "extraArgs.skip-nodes-with-local-storage"
-    value = "false"
-  }
-
-  set {
-    name  = "extraArgs.expander"
-    value = "least-waste"
-  }
-
-  set {
-    name  = "extraArgs.scale-down-unneeded-time"
-    value = "5m"
-  }
-
-  set {
-    name  = "extraArgs.scale-down-delay-after-add"
-    value = "5m"
-  }
-
-  set {
-    name  = "extraArgs.scale-down-unready-time"
-    value = "5m"
-  }
-
-  set {
-    name  = "nodeSelector.kubernetes\\.io/os"
-    value = "linux"
-  }
-
-  set {
-    name  = "extraEnv.AWS_DEFAULT_REGION"
-    value = var.region
-  }
-
-  set {
-    name  = "extraEnv.AWS_REGION"
-    value = var.region
-  }
-
-  set {
-    name  = "extraArgs.aws-use-static-instance-list"
-    value = "true"
-  }
-
-  set {
-    name  = "extraArgs.v"
-    value = "4"
-  }
-
-  set {
-    name  = "extraArgs.stderrthreshold"
-    value = "info"
-  }
-
-  set {
-    name  = "extraArgs.skip-nodes-with-system-pods"
-    value = "false"
-  }
+# Deployment
+resource "kubectl_manifest" "cluster_autoscaler_deployment" {
+  yaml_body = <<-YAML
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: cluster-autoscaler
+      namespace: ${var.autoscaler_namespace}
+      labels:
+        app: cluster-autoscaler
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: cluster-autoscaler
+      template:
+        metadata:
+          labels:
+            app: cluster-autoscaler
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "8085"
+        spec:
+          priorityClassName: system-cluster-critical
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          serviceAccountName: cluster-autoscaler
+          containers:
+            - image: registry.k8s.io/autoscaling/cluster-autoscaler:${var.autoscaler_image_tag}
+              name: cluster-autoscaler
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 600Mi
+                requests:
+                  cpu: 100m
+                  memory: 600Mi
+              command:
+                - ./cluster-autoscaler
+                - --v=4
+                - --stderrthreshold=info
+                - --cloud-provider=aws
+                - --skip-nodes-with-local-storage=false
+                - --expander=least-waste
+                - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/${var.cluster_name}
+                - --balance-similar-node-groups
+                - --skip-nodes-with-system-pods=false
+              volumeMounts:
+                - name: ssl-certs
+                  mountPath: /etc/ssl/certs/ca-certificates.crt
+                  readOnly: true
+              imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+          volumes:
+            - name: ssl-certs
+              hostPath:
+                path: /etc/ssl/certs/ca-bundle.crt
+  YAML
 
   depends_on = [
-    aws_iam_role_policy_attachment.cluster_autoscaler,
-    kubernetes_service_account.cluster_autoscaler
+    kubectl_manifest.cluster_autoscaler_sa,
+    kubectl_manifest.cluster_autoscaler_cluster_role_binding,
+    kubectl_manifest.cluster_autoscaler_role_binding
   ]
 }

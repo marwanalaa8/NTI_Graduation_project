@@ -40,16 +40,26 @@ module "db_secret" {
   tags = var.tags
 }
 
+locals {
+  oidc_provider_arn = var.oidc_provider_arn != null ? var.oidc_provider_arn : module.eks.oidc_provider_arn
+}
+
 module "clusterAutoscaler" {
   source = "./modules/clusterAutoscaler"
 
-  cluster_name       = module.eks.cluster_name
-  region             = var.region
-  oidc_provider_arn  = module.eks.oidc_provider_arn
-  oidc_provider_url  = module.eks.oidc_provider
+  cluster_name        = module.eks.cluster_name
+  region              = var.region
+  oidc_provider_arn   = local.oidc_provider_arn
+  oidc_provider_url   = module.eks.oidc_provider
+  autoscaler_namespace = "kube-system"
+  
+  providers = {
+    kubectl = kubectl.cluster_autoscaler
+  }
+  
   depends_on = [
     module.eks,
-    module.eks.eks_node_group_arn  # Wait for node group to be ready
+    module.eks.node_group_arns  
   ]
 }
 
@@ -98,6 +108,10 @@ resource "helm_release" "external_secrets" {
   version    = "0.10.5"
 
   create_namespace = true
+  depends_on = [
+    module.eks,
+    module.eks.eks_node_group_arn  
+  ]
 }
 resource "helm_release" "metrics_server" {
   name       = "metrics-server"

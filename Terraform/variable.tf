@@ -5,8 +5,9 @@ variable "create_eks" {
 }
 
 variable "region" {
-  type    = string
-  default = "eu-central-1"
+  type        = string
+  default     = "eu-central-1"
+  description = "AWS region"
 }
 variable "project_name" {
   type        = string
@@ -45,8 +46,8 @@ variable "azs" {
 }
 variable "cluster_name" {
   type        = string
-  default = "my-eks"
-  description = "EKS cluster name"
+  default     = "my-eks"
+  description = "Name of the EKS cluster"
 }
 
 variable "vpc_id" {
@@ -119,4 +120,27 @@ variable "tags" {
   default     = {
     Environment = "production"
   }
+}
+variable "oidc_provider_arn" {
+  description = "ARN of the OIDC provider for the EKS cluster. If not provided, it will be obtained from the EKS module."
+  type        = string
+  default     = null
+}
+
+variable "autoscaler_namespace" {
+  description = "Namespace for Cluster Autoscaler"
+  type        = string
+  default     = "kube-system"
+}
+
+variable "autoscaler_version" {
+  description = "Cluster Autoscaler version (should match k8s version)"
+  type        = string
+  default     = "1.34.0"
+}
+
+variable "autoscaler_image_tag" {
+  description = "Cluster Autoscaler image tag"
+  type        = string
+  default     = "v1.34.0"
 }
