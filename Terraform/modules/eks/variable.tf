@@ -24,33 +24,33 @@ variable "public_subnets_ids" {
 }
 
 variable "eks_version" {
-  type        = string
-  default     = "1.34"
+  type    = string
+  default = "1.34"
 }
 
 variable "node_group_name" {
-  type        = string
-  default     = "eks-workers"
+  type    = string
+  default = "eks-workers"
 }
 
 variable "node_group_instance_types" {
-  type        = list(string)
-  default     = ["t3.micro"]
+  type    = list(string)
+  default = ["t3.micro"]
 }
 
 variable "desired_capacity" {
-  type        = number
-  default     = 2
+  type    = number
+  default = 2
 }
 
 variable "max_capacity" {
-  type        = number
-  default     = 3
+  type    = number
+  default = 3
 }
 
 variable "min_capacity" {
-  type        = number
-  default     = 1
+  type    = number
+  default = 1
 }
 variable "bastion_sg_id" {
   type        = string

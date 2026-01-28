@@ -1,7 +1,6 @@
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
-# IAM Policy for Cluster Autoscaler
 resource "aws_iam_policy" "cluster_autoscaler" {
   name        = "ClusterAutoscalerPolicy-${var.cluster_name}"
   description = "Policy for Cluster Autoscaler to manage ASG"
@@ -42,7 +41,6 @@ resource "aws_iam_policy" "cluster_autoscaler" {
   })
 }
 
-# IAM Role for Cluster Autoscaler (IRSA)
 resource "aws_iam_role" "cluster_autoscaler" {
   name = "ClusterAutoscalerRole-${var.cluster_name}"
 
@@ -69,7 +67,6 @@ resource "aws_iam_role_policy_attachment" "cluster_autoscaler" {
   policy_arn = aws_iam_policy.cluster_autoscaler.arn
 }
 
-# Kubernetes ServiceAccount
 resource "kubectl_manifest" "cluster_autoscaler_sa" {
   depends_on = [
     aws_iam_role.cluster_autoscaler,
@@ -89,7 +86,6 @@ resource "kubectl_manifest" "cluster_autoscaler_sa" {
   YAML
 }
 
-# ClusterRole
 resource "kubectl_manifest" "cluster_autoscaler_cluster_role" {
   yaml_body = <<-YAML
     apiVersion: rbac.authorization.k8s.io/v1
@@ -150,7 +146,6 @@ resource "kubectl_manifest" "cluster_autoscaler_cluster_role" {
   YAML
 }
 
-# ClusterRoleBinding
 resource "kubectl_manifest" "cluster_autoscaler_cluster_role_binding" {
   yaml_body = <<-YAML
     apiVersion: rbac.authorization.k8s.io/v1
@@ -173,7 +168,6 @@ resource "kubectl_manifest" "cluster_autoscaler_cluster_role_binding" {
   depends_on = [kubectl_manifest.cluster_autoscaler_cluster_role]
 }
 
-# Role
 resource "kubectl_manifest" "cluster_autoscaler_role" {
   yaml_body = <<-YAML
     apiVersion: rbac.authorization.k8s.io/v1
@@ -195,7 +189,7 @@ resource "kubectl_manifest" "cluster_autoscaler_role" {
   YAML
 }
 
-# RoleBinding
+
 resource "kubectl_manifest" "cluster_autoscaler_role_binding" {
   yaml_body = <<-YAML
     apiVersion: rbac.authorization.k8s.io/v1
@@ -219,7 +213,6 @@ resource "kubectl_manifest" "cluster_autoscaler_role_binding" {
   depends_on = [kubectl_manifest.cluster_autoscaler_role]
 }
 
-# Deployment
 resource "kubectl_manifest" "cluster_autoscaler_deployment" {
   yaml_body = <<-YAML
     apiVersion: apps/v1

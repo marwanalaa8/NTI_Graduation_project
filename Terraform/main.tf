@@ -1,22 +1,11 @@
 module "vpc" {
   source = "./modules/vpc"
 
-  project_name          = var.project_name
-  vpc_cidr              = var.vpc_cidr
-  public_subnets_cidr   = var.public_subnets_cidr
-  private_subnets_cidr  = var.private_subnets_cidr
-  azs                   = var.azs
-}
-
-# Data source for Amazon Linux 2 AMI
-data "aws_ami" "amazon_linux" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
+  project_name         = var.project_name
+  vpc_cidr             = var.vpc_cidr
+  public_subnets_cidr  = var.public_subnets_cidr
+  private_subnets_cidr = var.private_subnets_cidr
+  azs                  = var.azs
 }
 
 module "eks" {
@@ -32,14 +21,15 @@ module "eks" {
   node_group_instance_types = var.node_group_instance_types
   desired_capacity          = var.desired_capacity
 }
+/*
 module "db_secret" {
-  source       = "./modules/asm"
-  secret_name  = var.secret_name
-  description  = var.description
+  source        = "./modules/asm"
+  secret_name   = var.secret_name
+  description   = var.description
   secret_values = var.secret_values
-  tags = var.tags
+  tags          = var.tags
 }
-
+*/
 locals {
   oidc_provider_arn = var.oidc_provider_arn != null ? var.oidc_provider_arn : module.eks.oidc_provider_arn
 }
@@ -47,19 +37,19 @@ locals {
 module "clusterAutoscaler" {
   source = "./modules/clusterAutoscaler"
 
-  cluster_name        = module.eks.cluster_name
-  region              = var.region
-  oidc_provider_arn   = local.oidc_provider_arn
-  oidc_provider_url   = module.eks.oidc_provider
+  cluster_name         = module.eks.cluster_name
+  region               = var.region
+  oidc_provider_arn    = local.oidc_provider_arn
+  oidc_provider_url    = module.eks.oidc_provider
   autoscaler_namespace = "kube-system"
-  
+
   providers = {
     kubectl = kubectl.cluster_autoscaler
   }
-  
+
   depends_on = [
     module.eks,
-    module.eks.node_group_arns  
+    module.eks.node_group_arns
   ]
 }
 
@@ -81,9 +71,13 @@ resource "helm_release" "nginx_ingress" {
     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
     value = "nlb"
   }
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-name"
+    value = lower("${var.project_name}-ingress-nlb")
+  }
   depends_on = [
     module.eks,
-    module.eks.eks_node_group_arn  
+    module.eks.eks_node_group_arn
   ]
 }
 resource "helm_release" "prometheus" {
@@ -96,7 +90,7 @@ resource "helm_release" "prometheus" {
   create_namespace = true
   depends_on = [
     module.eks,
-    module.eks.eks_node_group_arn 
+    module.eks.eks_node_group_arn
   ]
 }
 
@@ -110,7 +104,7 @@ resource "helm_release" "external_secrets" {
   create_namespace = true
   depends_on = [
     module.eks,
-    module.eks.eks_node_group_arn  
+    module.eks.eks_node_group_arn
   ]
 }
 resource "helm_release" "metrics_server" {
@@ -132,7 +126,120 @@ resource "helm_release" "metrics_server" {
 
   depends_on = [
     module.eks,
-    module.eks.eks_node_group_arn  
+    module.eks.eks_node_group_arn
   ]
 }
+resource "helm_release" "argocd" {
+  name             = "argocd"
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  namespace        = "argocd"
+  create_namespace = true
+
+  set {
+    name  = "server.admin.password"
+    value = var.argocd_admin_password
+  }
+
+  set {
+    name  = "server.resources.requests.cpu"
+    value = "250m"
+  }
+
+  set {
+    name  = "server.resources.requests.memory"
+    value = "512Mi"
+  }
+
+  set {
+    name  = "server.resources.limits.cpu"
+    value = "500m"
+  }
+
+  set {
+    name  = "server.resources.limits.memory"
+    value = "1Gi"
+  }
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
+  depends_on = [
+    module.eks,
+    module.eks.eks_node_group_arn
+  ]
+
+}
+
+
+data "aws_route53_zone" "main" {
+  name         = "mostafagheta.online"
+  private_zone = false
+}
+
+data "kubernetes_service" "nginx_ingress" {
+  metadata {
+    name      = "nginx-ingress-ingress-nginx-controller"
+    namespace = "ingress-nginx"
+  }
+
+  depends_on = [helm_release.nginx_ingress]
+}
+
+locals {
+  nlb_hostname = try(
+    data.kubernetes_service.nginx_ingress.status[0].load_balancer[0].ingress[0].hostname,
+    ""
+  )
+
+  nlb_name = split("-", split(".", local.nlb_hostname)[0])[0]
+
+  domain_name      = "mostafagheta.online"
+  hosted_zone_name = "mostafagheta.online"
+}
+
+data "aws_lb" "nginx_nlb" {
+  name = local.nlb_name
+
+  depends_on = [
+    helm_release.nginx_ingress,
+    data.kubernetes_service.nginx_ingress
+  ]
+}
+
+module "nlb_domain" {
+  source = "./modules/route53"
+
+  domain_name      = local.domain_name
+  hosted_zone_name = local.hosted_zone_name
+  nlb_dns_name     = local.nlb_hostname
+  nlb_zone_id      = data.aws_lb.nginx_nlb.zone_id # Automatically fetched!
+
+  tags = {
+    Environment = "production"
+    ManagedBy   = "terraform"
+    Project     = "eks-ingress"
+    Service     = "nginx-ingress"
+  }
+
+  depends_on = [
+    helm_release.nginx_ingress,
+    data.kubernetes_service.nginx_ingress,
+    data.aws_lb.nginx_nlb
+  ]
+}
+
+module "ecr_backend" {
+  source = "./modules/ecr"
+
+  repository_name      = var.repository_name
+  image_tag_mutability = var.image_tag_mutability
+  scan_on_push         = var.scan_on_push
+  tags                 = var.ecr_tags
+
+}
+
+
 #terraform apply -var='secret_values={"username":"admin","password":"SuperSecret123!"}'

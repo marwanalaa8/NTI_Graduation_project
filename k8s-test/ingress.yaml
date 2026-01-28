@@ -8,7 +8,8 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - http:
+    - host: mostafagheta.online
+      http:
         paths:
           - path: /
             pathType: Prefix

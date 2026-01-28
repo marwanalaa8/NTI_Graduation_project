@@ -69,38 +69,38 @@ variable "public_subnets_ids" {
 }
 
 variable "eks_version" {
-  type        = string
-  default     = "1.34"
+  type    = string
+  default = "1.34"
 }
 
 variable "node_group_name" {
-  type        = string
-  default     = "eks-workers"
+  type    = string
+  default = "eks-workers"
 }
 
 variable "node_group_instance_types" {
-  type        = list(string)
-  default     = ["t3.small"]
+  type    = list(string)
+  default = ["m7i-flex.large"]
 }
 
 variable "desired_capacity" {
-  type        = number
-  default     = 2
+  type    = number
+  default = 2
 }
 
 variable "max_capacity" {
-  type        = number
-  default     = 3
+  type    = number
+  default = 3
 }
 
 variable "min_capacity" {
-  type        = number
-  default     = 2
+  type    = number
+  default = 2
 }
 variable "secret_name" {
   description = "Name of the secret"
   type        = string
-  default = "my-db-secret-test"
+  default     = "my-db-secret-test"
 }
 
 variable "description" {
@@ -117,7 +117,7 @@ variable "secret_values" {
 variable "tags" {
   description = "Tags for the secret"
   type        = map(string)
-  default     = {
+  default = {
     Environment = "production"
   }
 }
@@ -143,4 +143,53 @@ variable "autoscaler_image_tag" {
   description = "Cluster Autoscaler image tag"
   type        = string
   default     = "v1.34.0"
+}
+
+variable "argocd_admin_password" {
+  description = "Initial Argo CD admin password (change after first login)"
+  type        = string
+  default     = "ChangeMe123!" 
+}
+
+variable "route53_zone_name" {
+  description = "Route53 hosted zone domain name (e.g. example.com)"
+  type        = string
+  default     = "mostafagheta.online"
+}
+
+variable "route53_zone_id" {
+  description = "Optional: Route53 hosted zone id. If empty, the provisioner will look it up using AWS CLI."
+  type        = string
+  default     = "Z05521482SFU3T622EJXX"
+}
+
+variable "route53_record_name" {
+  description = "DNS record name to create/alias (defaults to zone apex when empty)"
+  type        = string
+  default     = ""
+}
+variable "repository_name" {
+  description = "ECR repository name"
+  type        = string
+  default     = "nti-project-repo"
+}
+variable "image_tag_mutability" {
+  description = "IMMUTABLE or MUTABLE"
+  type        = string
+  default     = "IMMUTABLE"
+}
+variable "scan_on_push" {
+  description = "Enable image scan on push"
+  type        = bool
+  default     = true
+}
+variable "ecr_tags" {
+  description = "Tags for ECR repository"
+  type        = map(string)
+  default = {
+    Environment = "production"
+    owner       = "mostafagheta"
+    Project     = "eks-ingress"
+    Service     = "ecr-repo"
+  }
 }

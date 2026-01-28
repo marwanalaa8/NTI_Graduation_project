@@ -27,5 +27,5 @@ variable "autoscaler_namespace" {
 variable "autoscaler_image_tag" {
   description = "The image tag for the Cluster Autoscaler deployment"
   type        = string
-  default     = "v1.34.0"  # Match this with your EKS version
+  default     = "v1.34.0"
 }
