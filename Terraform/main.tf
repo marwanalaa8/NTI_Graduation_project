@@ -137,11 +137,6 @@ resource "helm_release" "argocd" {
   create_namespace = true
 
   set {
-    name  = "server.admin.password"
-    value = var.argocd_admin_password
-  }
-
-  set {
     name  = "server.resources.requests.cpu"
     value = "250m"
   }

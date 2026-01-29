@@ -145,12 +145,6 @@ variable "autoscaler_image_tag" {
   default     = "v1.34.0"
 }
 
-variable "argocd_admin_password" {
-  description = "Initial Argo CD admin password (change after first login)"
-  type        = string
-  default     = "ChangeMe123!" 
-}
-
 variable "route53_zone_name" {
   description = "Route53 hosted zone domain name (e.g. example.com)"
   type        = string
