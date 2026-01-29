@@ -12,13 +12,11 @@ resource "aws_iam_role" "eks_cluster_role" {
     }]
   })
 }
-# AmazonEKSClusterPolicy → allows creating cluster resources.
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   role       = aws_iam_role.eks_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-# AmazonEKSVPCResourceController → allows EKS to manage networking (ENIs in subnets).
 resource "aws_iam_role_policy_attachment" "eks_vpc_policy" {
   role       = aws_iam_role.eks_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
@@ -32,7 +30,6 @@ resource "aws_security_group" "eks_cluster_sg" {
   description = "EKS Cluster Security Group"
   vpc_id      = var.vpc_id
 
-  # Allow all outbound traffic
   egress {
     from_port   = 0
     to_port     = 0
@@ -53,7 +50,6 @@ resource "aws_security_group" "eks_node_sg" {
   vpc_id      = var.vpc_id
   description = "Security group for all nodes in the cluster"
 
-  # Allow all outbound traffic
   egress {
     from_port   = 0
     to_port     = 0
@@ -67,7 +63,6 @@ resource "aws_security_group" "eks_node_sg" {
   }
 }
 
-# Allow nodes to communicate with each other
 resource "aws_security_group_rule" "nodes_internal" {
   description              = "Allow nodes to communicate with each other"
   from_port                = 0
